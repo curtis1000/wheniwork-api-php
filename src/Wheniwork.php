@@ -22,11 +22,12 @@ class Wheniwork
     /**
      * HTTP Methods
      */
-    const METHOD_GET    = 'get';
-    const METHOD_POST   = 'post';
-    const METHOD_PUT    = 'put';
-    const METHOD_PATCH  = 'patch';
-    const METHOD_DELETE = 'delete';
+    const METHOD_GET     = 'get';
+    const METHOD_POST    = 'post';
+    const METHOD_PUT     = 'put';
+    const METHOD_PATCH   = 'patch';
+    const METHOD_DELETE  = 'delete';
+    const METHOD_OPTIONS = 'options';
 
     private $api_token;
     private $api_endpoint = 'https://api.wheniwork.com/2';
@@ -190,6 +191,19 @@ class Wheniwork
         return $this->makeRequest($method, self::METHOD_DELETE, $params, $headers);
     }
 
+    /**
+     * Discover object permissions. Must include the ID.
+     *
+     * @param  string $method The API method to call, e.g. '/annotations/1'
+     * @param  array $params An array of arguments to pass to the method.
+     * @param  array $headers Array of custom headers to be passed
+     * @return array           Object of json decoded API response.
+     */
+    public function options($method, $params = [], $headers = [])
+    {
+        return $this->makeRequest($method, self::METHOD_OPTIONS, $params, $headers);
+    }
+
 
     /**
      * Performs the underlying HTTP request. Exciting stuff happening here. Not really.
@@ -223,11 +237,13 @@ class Wheniwork
         foreach ($headers as $k => $v) {
             $headers_data[] = $k . ': ' . $v;
         }
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers_data);
 
+        $curlopt_header = self::METHOD_OPTIONS === $request;
+
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers_data);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, strtoupper($request));
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_HEADER, false);
+        curl_setopt($ch, CURLOPT_HEADER, $curlopt_header);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $this->verify_ssl);
@@ -238,6 +254,11 @@ class Wheniwork
 
         $result = curl_exec($ch);
         curl_close($ch);
+
+        if ($result && $curlopt_header) {
+            // we are just returning the http response headers, not the body
+            return $this->parseResponseHeaders($result);
+        }
 
         return $result ? json_decode($result) : false;
     }
@@ -266,5 +287,29 @@ class Wheniwork
         $response = $login->makeRequest("login", self::METHOD_POST, $params, $headers);
 
         return $response;
+    }
+
+    /**
+     * Parse a set of HTTP headers
+     *
+     * @param string The php headers to be parsed
+     */
+    private function parseResponseHeaders($raw_headers)
+    {
+        $headers = array_map('trim', explode("\n", $raw_headers));
+        $output  = [];
+
+        if ('HTTP' === substr($headers[0], 0, 4)) {
+            list(, $output['status'], $output['status_text']) = explode(' ', $headers[0]);
+            unset($headers[0]);
+        }
+
+        foreach ($headers as $v) {
+            $h = preg_split('/:\s*/', $v);
+            if (!empty($h[0]) && !empty($h[1])) {
+                $output[strtolower($h[0])] = $h[1];
+            }
+        }
+        return (object) $output;
     }
 }
