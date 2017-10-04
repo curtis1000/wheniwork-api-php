@@ -1,23 +1,27 @@
 <?php
 
+use GuzzleHttp\Client;
+
 /**
  * Client library for the When I Work scheduling and attendance platform.
  *
- * Uses curl to request JSON responses from the When I Work API.
- * This probably has more comments than code.
+ * Uses Guzzle to request JSON responses from the When I Work API.
+ * Version 2 is updated to use Guzzle, and designed to be a drop-in replacement for v0.1.
  *
  * Contributors:
  * Daniel Olfelt <daniel@thisclicks.com>
+ * Curtis Branum <curtis.branum@wheniwork.com>
  *
  * @author Daniel Olfelt <daniel@thisclicks.com>
- * @version 0.1
+ * @author Curtis Branum <curtis.branum@wheniwork.com>
+ * @version 2.0
  */
 class Wheniwork
 {
     /**
      * Library Version
      */
-    const VERSION = '0.1';
+    const VERSION = '2.0';
 
     /**
      * HTTP Methods
@@ -28,10 +32,14 @@ class Wheniwork
     const METHOD_PATCH  = 'patch';
     const METHOD_DELETE = 'delete';
 
+    const DEFAULT_TIMEOUT = 10;
+
     private $api_token;
+    private $response;
     private $api_endpoint = 'https://api.wheniwork.com/2';
     private $api_headers  = [];
     private $verify_ssl   = false;
+    private $options      = [];
 
     /**
      * Create a new instance
@@ -49,6 +57,7 @@ class Wheniwork
         if (!empty($options['headers'])) {
             $this->setHeaders($options['headers'], true);
         }
+        $this->timeout = !empty($options['timeout']) ? $options['timeout']: self::DEFAULT_TIMEOUT;
     }
 
     /**
@@ -208,40 +217,43 @@ class Wheniwork
             $url .= '?' . http_build_query($params);
         }
 
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'WhenIWork-PHP/' . static::VERSION);
+        $config = [
+            'base_uri' => $this->api_endpoint,
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'User-Agent' => 'WhenIWork-PHP/' . static::VERSION,
+            ],
+            'timeout'  => $this->timeout,
+        ];
 
-        $headers += $this->getHeaders();
-
-        $headers['Content-Type'] = 'application/json';
         if ($this->api_token) {
-            $headers['W-Token'] = $this->api_token;
+            $config['headers']['W-Token'] = $this->api_token;
+        }
+        $config['headers'] += $this->getHeaders();
+        $config['headers'] += $headers;
+
+        $client = new Client($config);
+
+        $body = null;
+        if (in_array($request, [self::METHOD_POST, self::METHOD_PUT, self::METHOD_PATCH]) &&
+            !empty($params)) {
+            $body = [
+                'json' => $params,
+            ];
         }
 
-        $headers_data = [];
-        foreach ($headers as $k => $v) {
-            $headers_data[] = $k . ': ' . $v;
-        }
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers_data);
-
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, strtoupper($request));
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_HEADER, false);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $this->verify_ssl);
-
-        if (in_array($request, [self::METHOD_POST, self::METHOD_PUT, self::METHOD_PATCH])) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($params));
-        }
-
-        $result = curl_exec($ch);
-        curl_close($ch);
-
-        return $result ? json_decode($result) : false;
+        $this->response = $client->{$request}($url, $body);
+        return json_decode((string) $this->response->getBody());
     }
 
+    /**
+     * Get the Guzzle Response object
+     * @return ?GuzzleHttp\Psr7\Response
+     */
+    public function getResponse()
+    {
+        return $this->response;
+    }
 
     /**
      * Login helper using developer key and credentials to get back a login response
